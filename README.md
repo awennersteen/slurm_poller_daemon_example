@@ -28,6 +28,8 @@ The workflow has three parts:
    sacctmgr show resource withcluster
    ```
 
+   With Slurm 25.05.3 we saw `slurmctld` crash in the backfill scheduler when a pending job requested a license added after `slurmctld` started. Run `scontrol reconfigure` after adding a license.
+
 2. **`slurm_license_poller` runs as a daemon on one node in the cluster**, acting as the external license manager. Every `poll_interval` seconds it queries the status of each configured resource through QRMI and uses the `sacctmgr` CLI to update the license:
 
    ```bash
@@ -40,10 +42,12 @@ The workflow has three parts:
 
    A backend is considered **ready** only if QRMI reports it as `online` and it does not report itself as unhealthy (`healthy == false`) or busy (`busy == true`). Vendors that don't report `healthy`/`busy` are treated as ready whenever they are online. `offline` and `paused` backends are treated as busy.
 
+   The daemon reads each license's count from Slurm at startup, so the licenses must exist before it starts. A busy backend consumes the whole count. A license with a count above 1 can also track the capacity QRMI reports: if a ready backend has `available_slots` free, the daemon sets `lastconsumed = count - available_slots`. See [Pasqal Warden QPU slots](#pasqal-warden-qpu-slots). A license with count 1 remains a busy/ready flag.
+
    The daemon is designed to **fail closed**, so jobs never run against a backend whose state is unknown:
 
-   - If the status of a backend can't be retrieved `failure_threshold` times in a row (e.g. network or authentication errors), its license is marked consumed until the status is available again.
-   - On shutdown (`SIGTERM` / `SIGINT`), every license is marked consumed, since nothing maintains it any more. Restarting the daemon releases the licenses of ready backends on its first poll.
+   - If the status of a backend can't be retrieved `failure_threshold` times in a row (e.g. network or authentication errors), its license is marked fully consumed until the status is available again.
+   - On shutdown (`SIGTERM` / `SIGINT`), every license is marked fully consumed, since nothing maintains it any more. Restarting the daemon releases the licenses of ready backends on its first poll.
    - The license is written whenever the observed state changes, and re-written every `resync_interval` seconds even if it hasn't, so manual edits or a restored `slurmdbd` are corrected.
 
 3. **Users request the license in their `sbatch` invocation**:
@@ -53,6 +57,39 @@ The workflow has three parts:
    ```
 
    The Slurm scheduler checks the Dynamic License count and, once it's available, allocates GPU and other resources and transitions the job to the `Execute` state.
+
+## Pasqal Warden QPU slots
+
+A [Pasqal](https://www.pasqal.com/) on-premises QPU is served by one Warden instance and configured in QRMI as a `pasqal-local` resource. Warden splits the QPU into QPU slots, and QRMI reports them as `capacity` (`max_slots`, `available_slots`). A job reserves its slots when the [QRMI SPANK plugin](https://github.com/qiskit-community/spank-plugins) opens its Warden session. Warden maintenance is reported as `paused`.
+
+Give the license the QPU's resource ID and the same count as Warden's `qpu_slots_total`. `sacctmgr` stores license names in lowercase and matches them case-insensitively, so the daemon can use the ID `PASQAL_LOCAL`, but jobs must request `pasqal_local`:
+
+```bash
+sacctmgr -i add resource name=PASQAL_LOCAL server=slurmdb type=license \
+    count=10 flags=absolute cluster=<your cluster name> allowed=10
+sacctmgr -i update resource PASQAL_LOCAL set lastconsumed=10
+```
+
+The QRMI config entry needs only the Warden URL. The job identity (`QRMI_JOB_UID`, `QRMI_JOB_ID`) is only needed to open a session, which the daemon never does:
+
+```json
+{"name": "PASQAL_LOCAL", "type": "pasqal-local",
+ "environment": {"QRMI_WARDEN_URL": "http://warden-host:4207"}}
+```
+
+With `"resources": ["PASQAL_LOCAL"]`, the daemon publishes the slots in use, including those held outside Slurm, while Warden is accessible. During maintenance, on errors, and on shutdown it publishes all 10. Slurm subtracts the slots of its own running jobs from `lastconsumed`, so jobs needing more slots than are free stay `PENDING (Licenses)`. Each QPU has its own Warden, resource and license, so a failure consumes only that QPU's license.
+
+Request one license per slot, and configure the SPANK plugin in `plugstack.conf` to pass the granted count to Warden as the session's QPU slots:
+
+```
+required /usr/lib64/slurm/spank_qrmi.so /etc/slurm/qrmi_config.json --qpu-slots-license:PASQAL_LOCAL=pasqal_local@slurmdb
+```
+
+```bash
+sbatch --qpu=PASQAL_LOCAL --licenses=pasqal_local@slurmdb:2 job.sh
+```
+
+The license only gates admission. The Warden session opened by the SPANK plugin still decides whether the slots are granted.
 
 ## (Optional) Job submit plugin (`plugins/`)
 
