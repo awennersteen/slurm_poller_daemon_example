@@ -79,17 +79,14 @@ The QRMI config entry needs only the Warden URL. The job identity (`QRMI_JOB_UID
 
 With `"resources": ["PASQAL_LOCAL"]`, the daemon publishes the slots in use, including those held outside Slurm, while Warden is accessible. During maintenance, on errors, and on shutdown it publishes all 10. Slurm subtracts the slots of its own running jobs from `lastconsumed`, so jobs needing more slots than are free stay `PENDING (Licenses)`. Each QPU has its own Warden, resource and license, so a failure consumes only that QPU's license.
 
-Request one license per slot, and configure the SPANK plugin in `plugstack.conf` to pass the granted count to Warden as the session's QPU slots:
-
-```
-required /usr/lib64/slurm/spank_qrmi.so /etc/slurm/qrmi_config.json --qpu-slots-license:PASQAL_LOCAL=pasqal_local@slurmdb
-```
+Request one license per slot, and set the same count in `PASQAL_LOCAL_QRMI_JOB_QPU_SLOTS` (default 1). The SPANK plugin passes the job's `{resource}_QRMI_*` variables to QRMI, which claims that many slots when it opens the Warden session:
 
 ```bash
-sbatch --qpu=PASQAL_LOCAL --licenses=pasqal_local@slurmdb:2 job.sh
+export PASQAL_LOCAL_QRMI_JOB_QPU_SLOTS=4
+sbatch --qpu=PASQAL_LOCAL --licenses=pasqal_local@slurmdb:4 job.sh
 ```
 
-The license only gates admission. The Warden session opened by the SPANK plugin still decides whether the slots are granted.
+The license only gates admission. The Warden session opened by the SPANK plugin still decides whether the slots are granted. The job submit plugin below rejects batch jobs whose license count and `{resource}_QRMI_JOB_QPU_SLOTS` differ.
 
 ## (Optional) Job submit plugin (`plugins/`)
 
@@ -98,7 +95,7 @@ The license only gates admission. The Warden session opened by the SPANK plugin 
 
 The mechanism above only works if users actually request the license on their `sbatch` command line. Nothing in Slurm stops a user from forgetting `--licenses=ibm_kingston@slurmdb:1` — in which case the job just runs immediately without waiting for the backend, defeating the purpose of the license.
 
-To close that gap, the [`plugins/`](./plugins) directory contains a Slurm [Job Submit Plugin](https://slurm.schedmd.com/job_submit_plugins.html) that checks, at submission time, whether a job requests the required `--licenses` option. If it doesn't, the plugin rejects the job and returns an error prompting the user to add the option, rather than letting it run without coordinating with the quantum backend.
+To close that gap, the [`plugins/`](./plugins) directory contains a Slurm [Job Submit Plugin](https://slurm.schedmd.com/job_submit_plugins.html) that checks, at submission time, whether a job requests the required `--licenses` option. If it doesn't, the plugin rejects the job and returns an error prompting the user to add the option, rather than letting it run without coordinating with the quantum backend. For batch jobs it also rejects a license count that differs from `{qpu}_QRMI_JOB_QPU_SLOTS` (default 1); `srun` and `salloc` [don't send their environment](https://slurm.schedmd.com/job_submit_plugins.html#lua) to `slurmctld`, so it can't check theirs.
 
 Slurm stores license names in lowercase, so the plugin expects the lowercase form of the `--qpu` name: a job with `--qpu=EMU_FREE` requests `--licenses=emu_free@slurmdb:1`.
 
