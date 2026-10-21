@@ -56,6 +56,9 @@ The workflow has three parts:
 
 ## (Optional) Job submit plugin (`plugins/`)
 
+> [!NOTE]
+> This plugin code works with [QRMI SPANK plugin 0.12.0](https://github.com/qiskit-community/spank-plugins/releases/tag/0.12.0) or above.
+
 The mechanism above only works if users actually request the license on their `sbatch` command line. Nothing in Slurm stops a user from forgetting `--licenses=ibm_kingston@slurmdb:1` — in which case the job just runs immediately without waiting for the backend, defeating the purpose of the license.
 
 To close that gap, the [`plugins/`](./plugins) directory contains a Slurm [Job Submit Plugin](https://slurm.schedmd.com/job_submit_plugins.html) that checks, at submission time, whether a job requests the required `--licenses` option. If it doesn't, the plugin rejects the job and returns an error prompting the user to add the option, rather than letting it run without coordinating with the quantum backend.
