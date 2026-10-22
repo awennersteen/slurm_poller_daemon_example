@@ -63,6 +63,8 @@ The mechanism above only works if users actually request the license on their `s
 
 To close that gap, the [`plugins/`](./plugins) directory contains a Slurm [Job Submit Plugin](https://slurm.schedmd.com/job_submit_plugins.html) that checks, at submission time, whether a job requests the required `--licenses` option. If it doesn't, the plugin rejects the job and returns an error prompting the user to add the option, rather than letting it run without coordinating with the quantum backend.
 
+Slurm stores license names in lowercase, so the plugin expects the lowercase form of the `--qpu` name: a job with `--qpu=EMU_FREE` requests `--licenses=emu_free@slurmdb:1`.
+
 See the [Slurm documentation](https://slurm.schedmd.com/job_submit_plugins.html) for how to install and enable a `job_submit` plugin on your cluster.
 
 ## Installation

@@ -72,14 +72,15 @@ function slurm_job_submit(job_desc, part_list, submit_uid)
 
     slurm.log_info("job_submit: uid=%d detected qpu: %s", submit_uid, qpu)
 
-    -- Build the list of required licenses from --qpu.
+    -- Build the list of required licenses from --qpu. Slurm stores license
+    -- names in lowercase and rejects requests for e.g. PASQAL_LOCAL@slurmdb.
     local required = {}
     for _, host in ipairs(split(qpu, ",")) do
         if not host:match("^[%w_%-]+$") then
             slurm.log_user("Error: invalid --qpu host name '%s'", host)
             return slurm.ERROR
         end
-        table.insert(required, host .. "@" .. LICENSE_SERVER)
+        table.insert(required, host:lower() .. "@" .. LICENSE_SERVER)
     end
     if #required == 0 then
         slurm.log_user("Error: --qpu requires at least one host name")
